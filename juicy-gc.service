@@ -1,0 +1,25 @@
+[Unit]
+Description=JuiceFS Garbage Collection & Cloud Cleanup (Juicy)
+After=juicy-mount.service
+
+[Service]
+Type=oneshot
+User=root
+# 1. 執行 JuiceFS 核心 GC
+ExecStart=/usr/local/bin/juicefs gc --delete sqlite3:///cloud/cache/juicy_meta/juicy.db
+
+# 2. 執行 SQLite 資料庫清理
+ExecStartPost=/usr/bin/sqlite3 /cloud/cache/juicy_meta/juicy.db "VACUUM;"
+
+# 3. 清理超過 30 天的本地 Metadata Dump
+ExecStartPost=/usr/bin/find /cloud/chunks/juicy-chunks/meta/ -name "dump-*.json.gz" -mtime +30 -delete
+
+# 4. 新增：清理 pCloud 上超過 24 小時的 .partial 暫存檔
+ExecStartPost=/usr/bin/rclone delete my_pcloud_account:/rclone/juicy_chunks \
+    --include "*.partial" \
+    --min-age 24h \
+    --config=/home/cmm/.config/rclone/rclone.conf
+
+# 5. 清理 pCloud Trash
+ExecStartPost=/usr/bin/rclone cleanup my_pcloud_account: \
+    --config=/home/cmm/.config/rclone/rclone.conf

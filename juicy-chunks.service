@@ -1,0 +1,33 @@
+[Unit]
+Description=Rclone Union for Juicy Chunks
+After=network-online.target
+PartOf=juicy-mount.service
+
+[Service]
+Type=simple
+#User=root
+#Group=root
+ExecStartPre=/usr/bin/mkdir -p /cloud/cache/juicy_chunks_local /cloud/chunks /cloud/cache/juicy_meta
+#ExecStartPre=/usr/bin/chmod 755 /cloud/cache/juicy_chunks_local /cloud/chunks /cloud/cache/juicy_meta
+ExecStart=/usr/bin/rclone mount union: /cloud/chunks \
+  --config=/home/cmm/.config/rclone/rclone.conf \
+  --allow-non-empty \
+  --buffer-size 4M \
+  --use-mmap \
+  --cache-dir=/cloud/cache/rclone_union_cache \
+  --vfs-cache-mode full \
+  --vfs-cache-max-size 16G \
+  --vfs-cache-max-age 1h \
+  --vfs-cache-poll-interval 1m0s \
+  --vfs-read-ahead=12M \
+  --vfs-write-back 30s \
+  --vfs-fast-fingerprint \
+  --allow-other \
+  --uid 1001 \
+  --gid 1001 \
+  --contimeout 15s \
+  --timeout 30s \
+  --log-level INFO \
+  --log-file=/var/log/rclone/juicy-chunks.log
+ExecStop=/bin/fusermount3 -u -z /cloud/chunks
+Restart=on-failure

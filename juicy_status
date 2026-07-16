@@ -1,0 +1,286 @@
+#!/bin/bash
+
+# ==========================================
+# JuiceFS Offline Upload Architecture Checker
+# 適用於改為 /cloud/cache/ 路徑及 Timer 啟動 Disk Guard 的配置
+# ==========================================
+
+# --- 配置區 (請根據實際路徑修改) ---
+JFS_MOUNTPOINT="/cloud/juicy"
+UNION_MOUNTPOINT="/cloud/chunks"
+LOCAL_CACHE_DIR="/cloud/cache"
+RCLONE_VFS_DIR="${LOCAL_CACHE_DIR}/rclone_union_cache"
+RCLONE_CHUNKS_DIR="${LOCAL_CACHE_DIR}/juicy_chunks_local"
+JFS_CACHE_DIR="${LOCAL_CACHE_DIR}/jfsCache"
+META_DIR="/cloud/cache/juicy_meta"
+META_DB="$META_DIR/juicy.db"
+#FLAG="$META_DIR/.is_limited"
+STATE_FILE="$META_DIR/.juicy_guard_state"
+CLOUD_BACKUP_DIR="my_pcloud_account:/rclone/direct/juicy_meta/"
+RCLONE_CONF="/home/cmm/.config/rclone/rclone.conf"
+CACHE_FILE="/tmp/juicy_cloud_list.cache"
+CACHE_TTL=3600
+
+# --- 服務與計時器清單 ---
+SERVICES=(
+    "juicy-chunks.service"
+    "juicy-mount.service"
+    "juicy-upload.timer"
+    "juicy-upload.service"
+    "juicy-meta-backup.timer"
+    "juicy-meta-backup.service"
+    "juicy-disk-guard.timer"
+    "juicy-disk-guard.service"
+    "juicy-gc.timer"
+    "juicy-gc.service"
+)
+
+# --- 顏色設定 ---
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# --- 標題 ---
+echo -e "${BLUE}====================================================${NC}"
+echo -e "${BLUE}   JuicySync Sentinel (JSS) Monitor${NC}"
+echo -e "${BLUE}====================================================${NC}"
+date "+巡檢時間: %Y-%m-%d %H:%M:%S"
+echo ""
+
+# 1. 檢查核心掛載點
+echo -e "${YELLOW}[1. Mount Points Check]${NC}"
+check_mount() {
+    if mountpoint -q "$1"; then
+        echo -e "  $1: ${GREEN}Mounted${NC}"
+    else
+        echo -e "  $1: ${RED}NOT MOUNTED${NC}"
+    fi
+}
+check_mount "$UNION_MOUNTPOINT"
+check_mount "$JFS_MOUNTPOINT"
+echo ""
+
+# 2. 檢查所有服務與計時器狀態
+echo -e "${YELLOW}[2. Systemd Services & Timers Check]${NC}"
+printf "  %-30s %-15s %-20s\n" "Unit Name" "Status" "Last Run/Next Run"
+printf "  %-30s %-15s %-20s\n" "---------" "------" "-----------------"
+
+for unit in "${SERVICES[@]}"; do
+    STATUS=$(systemctl is-active "$unit" 2>/dev/null)
+    
+    # 格式化狀態顏色
+    if [ "$STATUS" == "active" ]; then
+        COLOR=$GREEN
+    elif [ "$STATUS" == "activating" ]; then
+        COLOR=$YELLOW
+    else
+        COLOR=$RED
+    fi
+
+    # 取得 Timer 的下一次執行時間或 Service 的最後一次執行時間
+    if [[ "$unit" == *.timer ]]; then
+        TIME_INFO=$(systemctl list-timers "$unit" --all | grep "$unit" | awk '{print $1" "$2}')
+        [ -z "$TIME_INFO" ] && TIME_INFO="N/A"
+    else
+        # 取得 Service 最後一次成功執行的時間
+        TIME_INFO=$(journalctl -u "$unit" --since "today" -n 1 --no-pager 2>/dev/null | grep "Finished" | awk '{print $1" "$2" "$3}' | tail -n 1)
+        if [ -z "$TIME_INFO" ]; then
+             # 如果今天沒執行過，試圖找最後一次執行的記錄
+             TIME_INFO=$(journalctl -u "$unit" -n 1 --no-pager 2>/dev/null | grep "Finished" | awk '{print $1" "$2" "$3}' | tail -n 1)
+        fi
+        [ -z "$TIME_INFO" ] && TIME_INFO="N/A"
+    fi
+
+    printf "  %-30s ${COLOR}%-15s${NC} %-20s\n" "$unit" "$STATUS" "$TIME_INFO"
+done
+echo ""
+
+# 3 檢查即時傳輸進度
+echo -e "${YELLOW}[3. Active Upload Progress]${NC}"
+UPLOAD_LOG="/var/log/rclone/juicy-upload.log"
+
+# 判斷服務是否正在執行 (包含正在啟動中)
+IS_RUNNING=$(systemctl is-active juicy-upload.service)
+
+if [ "$IS_RUNNING" != "active" ] && [ "$IS_RUNNING" != "activating" ]; then
+    echo -e "  ${NC}No active upload task.${NC}"
+else
+    # 服務執行中，顯示即時數據
+    if [ -f "$UPLOAD_LOG" ]; then
+        LAST_STATS=$(grep "NOTICE:" "$UPLOAD_LOG" | tail -n 1)
+        
+        # 解析數據
+        if [ -n "$LAST_STATS" ]; then
+            if [ 0 == 1 ]; then
+                LOG_TIME=$(echo "$LAST_STATS" | awk '{print $2}')
+                VOL=$(echo "$LAST_STATS" | cut -d':' -f4 | cut -d',' -f1 | sed 's/^ *//')
+                PCT=$(echo "$LAST_STATS" | cut -d',' -f2 | sed 's/^ *//')
+                SPD=$(echo "$LAST_STATS" | cut -d',' -f3 | sed 's/^ *//')
+                ETA=$(echo "$LAST_STATS" | cut -d',' -f4 | sed 's/^ *//')
+
+                #printf "  %-10s | %-25s | %-6s | %-12s | %-20s\n" "Update" "Progress / Total" "Pct" "Speed" "ETA (Files)"
+                printf "  ${BLUE}%-10s${NC} | ${GREEN}%-25s${NC} | ${BLUE}%-6s${NC} | ${YELLOW}%-12s${NC} | %-20s\n" "$LOG_TIME" "$VOL" "$PCT" "$SPD" "$ETA"
+            else
+                LOG_TIME=$(echo "$LAST_STATS" | awk '{print $2}')
+                DATA_BODY=$(echo "$LAST_STATS" | cut -d':' -f4-)
+                
+                #echo -e "  Update   | Progress (Total) / Percentage / Speed / ETA (Files)"
+                echo -e "  ${BLUE}$LOG_TIME${NC} | ${GREEN}${DATA_BODY}${NC}"
+            fi
+
+        fi
+    fi
+fi
+echo ""
+
+# 4. 檢查本地快取與磁碟空間
+echo -e "${YELLOW}[4. Local Cache & Disk Space Check]${NC}"
+if [ -d "$LOCAL_CACHE_DIR" ]; then
+
+    echo -e "  本地快取目錄:"
+
+    # 檢查 rClone Union 目錄
+    if [ -d "$RCLONE_CHUNKS_DIR" ]; then
+        RCLONE_CHUNKS_SIZE=$(du -sh "$RCLONE_CHUNKS_DIR" 2>/dev/null | awk '{print $1}')
+        [[ -z "$RCLONE_CHUNKS_SIZE" ]] && RCLONE_CHUNKS_SIZE="N/A"
+        echo -e "  - (rClone Union) ($RCLONE_CHUNKS_DIR): ${BLUE}$RCLONE_CHUNKS_SIZE${NC}"
+    else
+        echo -e "  - (rClone Union) ($RCLONE_CHUNKS_DIR): ${RED}not found${NC}"
+    fi
+
+    # 檢查 rClone VFS 目錄
+    if [ -d "$RCLONE_VFS_DIR" ]; then
+        RCLONE_VFS_SIZE=$(du -sh "$RCLONE_VFS_DIR" 2>/dev/null | awk '{print $1}')
+        [[ -z "$RCLONE_VFS_SIZE" ]] && RCLONE_VFS_SIZE="N/A"
+        echo -e "  - (rClone VFS) ($RCLONE_VFS_DIR): ${BLUE}$RCLONE_VFS_SIZE${NC}"
+    else
+        echo -e "  - (rClone VFS) ($RCLONE_VFS_DIR): ${RED}not found${NC}"
+    fi
+
+#    # 檢查 JuiceFS Cache 目錄
+#    if [ -d "$JFS_CACHE_DIR" ]; then
+#        JFS_CACHE_SIZE=$(du -sh "$JFS_CACHE_DIR" 2>/dev/null | awk '{print $1}')
+#        [[ -z "$JFS_CACHE_SIZE" ]] && JFS_CACHE_SIZE="N/A"
+#        echo -e "  - (JuiceFS Cache) ($JFS_CACHE_DIR): ${BLUE}$JFS_CACHE_SIZE${NC}"
+#    else
+#        echo -e "  - (JuiceFS Cache) ($JFS_CACHE_DIR): ${RED}not found${NC}"
+#    fi
+
+# 檢查 JuiceFS Cache (包含 rawstaging 與 raw)
+    if [ -d "$JFS_CACHE_DIR" ]; then
+        # 遍歷 jfsCache 下的所有 UUID 目錄
+        find "$JFS_CACHE_DIR" -maxdepth 1 -type d -not -path "$JFS_CACHE_DIR" | while read -r uuid_path; do
+            UUID=$(basename "$uuid_path")
+            
+            # 計算 rawstaging (寫入暫存)
+            RAWSTAGING_DIR="${uuid_path}/rawstaging"
+            STAGING_SIZE=$(du -sh "$RAWSTAGING_DIR" 2>/dev/null | awk '{print $1}')
+            
+            # 計算 raw (讀取快取)
+            RAW_DIR="${uuid_path}/raw"
+            RAW_SIZE=$(du -sh "$RAW_DIR" 2>/dev/null | awk '{print $1}')
+
+            echo -e "  - (JuiceFS Cache) [${UUID:0:8}...]: WriteBack: ${BLUE}${STAGING_SIZE:-0}${NC} / ReadCache: ${BLUE}${RAW_SIZE:-0}${NC}"
+        done
+    else
+        echo -e "  - (JuiceFS Cache): ${RED}not found${NC}"
+    fi
+
+    # 磁碟剩餘空間與百分比檢查
+    # 使用 df 直接取得剩餘 (Avail) 與百分比 (Use%)
+    DISK_INFO=$(df -BG "$LOCAL_CACHE_DIR" 2>/dev/null | awk 'NR==2 {print $2" "$4" "$5}')
+    
+    if [[ -z "$DISK_INFO" ]]; then
+        STATE_COLOR=$RED; STATE_TXT="UNKNOWN"
+        FREE_GB="N/A"; TOTAL_GB="N/A"; PERCENT_USED="N/A"
+    else
+        TOTAL_GB=$(echo $DISK_INFO | awk '{print $1}' | sed 's/G//')
+        FREE_GB=$(echo $DISK_INFO | awk '{print $2}' | sed 's/G//')
+        # 取得使用百分比並計算剩餘百分比
+        USED_PCT=$(echo $DISK_INFO | awk '{print $3}' | sed 's/%//')
+        FREE_PCT=$((100 - USED_PCT))
+        
+        # 空間狀態顏色判斷
+        if [ "$FREE_GB" -lt 50 ]; then
+            STATE_COLOR=$RED; STATE_TXT="CRITICAL"
+        elif [ "$FREE_GB" -lt 100 ]; then
+            STATE_COLOR=$YELLOW; STATE_TXT="LOW"
+        else
+            STATE_COLOR=$GREEN; STATE_TXT="OK"
+        fi
+    fi
+    
+    echo -e "  快取磁碟剩餘空間: ${BLUE}${FREE_GB}GB${NC} / ${TOTAL_GB}GB (${BLUE}${FREE_PCT}% Free${NC}) [${STATE_COLOR}${STATE_TXT}${NC}]"
+else
+    echo -e "  ${RED}Error: Local cache directory not found.${NC}"
+fi
+echo ""
+
+# 5. 上傳限制狀態
+
+#echo -e "${YELLOW}[5. Upload Limit Status 50G < > 100G ]${NC}"
+#
+#if [ -f "$FLAG" ]; then
+#    echo -e "  狀態: 保護模式 [${RED}啟用 (空間受限)${NC}]"
+#else
+#    echo -e "  狀態: 保護模式 [${GREEN}正常 (未觸發)${NC}]"
+#fi
+
+echo -e "${YELLOW}[5. CPU Suppression Status]${NC}"
+
+if [ -f "$STATE_FILE" ]; then
+    read S_FREE S_QUOTA S_SHARES < "$STATE_FILE"
+    S_CPUUSec=$(systemctl show juicy-mount.service -p CPUQuotaPerSecUSec --value)
+    echo -e "  juicy-mount CPU Quota: ${BLUE}${S_QUOTA}%${NC} (${BLUE}${S_CPUUSec}${NC}), juicy-upload CPU Shares: ${BLUE}${S_SHARES}${NC}"
+
+else
+    echo -e "  ${RED}Resource Guard: No state file found."
+fi
+
+echo ""
+
+# 6. 檢查元數據備份狀態 (修正為 30 天保留期，僅顯示最新 1 個)
+echo -e "${YELLOW}[6. Metadata Backup Status]${NC}"
+echo -e "  元數據資料庫 ($META_DB): $(du -sh "$META_DB" 2>/dev/null | awk '{print $1}')"
+
+# 檢查本地備份
+echo -e "  ${BLUE}本地備份 (.gz) - 最新 1 個:${NC}"
+LOCAL_BAK_COUNT=$(ls -1 "$META_DIR"/juicy.db.*.gz 2>/dev/null | wc -l)
+if [ "$LOCAL_BAK_COUNT" -gt 0 ]; then
+    # 僅取得最新的一個檔案資訊
+    ls -lh "$META_DIR"/juicy.db.*.gz | sort -r -k 9 | head -n 1 | awk '{print "    - "$9" ("$5")"}'
+    echo -e "    總計: ${GREEN}$LOCAL_BAK_COUNT${NC} 份本地備份"
+else
+    echo -e "    ${RED}無本地備份檔案${NC}"
+fi
+
+# 檢查雲端備份
+echo -e "  ${BLUE}雲端備份 (pCloud) - 最新 1 個:${NC}"
+if [ -f "$CACHE_FILE" ]; then
+    CACHE_TIME=$(date -r "$CACHE_FILE" "+%Y-%m-%d %H:%M:%S")
+    ELAPSED=$(( $(date +%s) - $(date -r "$CACHE_FILE" +%s) ))
+else
+    ELAPSED=$((CACHE_TTL + 1))
+fi
+
+if [ $ELAPSED -lt $CACHE_TTL ]; then
+    CLOUD_LIST=$(cat "$CACHE_FILE")
+    CACHE_STATUS="(來自本地快取: $CACHE_TIME)"
+else
+    CLOUD_LIST=$(rclone lsf "$CLOUD_BACKUP_DIR" --config "$RCLONE_CONF" --include "juicy.db.*.gz" --files-only --format "tp" 2>/dev/null)
+    echo "$CLOUD_LIST" > "$CACHE_FILE"
+    CACHE_STATUS="(已從雲端更新: $(date "+%Y-%m-%d %H:%M:%S"))"
+fi
+
+if [ -n "$CLOUD_LIST" ]; then
+    CLOUD_BAK_COUNT=$(echo "$CLOUD_LIST" | wc -l)
+    echo -e "    雲端已存儲: ${GREEN}$CLOUD_BAK_COUNT${NC} 份元數據備份 $CACHE_STATUS"
+    # 僅列出最新 1 個
+    echo "$CLOUD_LIST" | sort -r | head -n 1 | awk '{print "    - "$0}'
+else
+    echo -e "    ${RED}無法取得雲端備份資訊或目前無備份檔案${NC}"
+fi
+
+echo -e "${BLUE}====================================================${NC}"

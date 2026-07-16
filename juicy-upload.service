@@ -1,0 +1,23 @@
+[Unit]
+Description=Juicy Background Chunks Upload (20s interval)
+After=juicy-mount.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/rclone move /cloud/cache/juicy_chunks_local my_pcloud_account:/rclone/juicy_chunks \
+    --config=/home/cmm/.config/rclone/rclone.conf \
+    --min-age 10s \
+    --transfers 5 \
+    --checkers 10 \
+    --use-mmap \
+    --contimeout 60s \
+    --timeout 600s \
+    --order-by modtime,ascending \
+    --delete-empty-src-dirs \
+    --ignore-errors \
+    --log-level NOTICE \
+    --stats 5s \
+    --stats-one-line \
+    --stats-log-level NOTICE \
+    --log-file /var/log/rclone/juicy-upload.log

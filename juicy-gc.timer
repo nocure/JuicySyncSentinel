@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Juicy GC Timer
+PartOf=juicy-mount.service
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+Unit=juicy-gc.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Juicy Upload every 20 seconds
+PartOf=juicy-mount.service
+
+[Timer]
+# 啟動後 20 秒開始第一次執行
+OnBootSec=20s
+# 上次執行「結束後」20 秒再次執行，確保不重複
+OnUnitActiveSec=20s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,2 @@
+#!/bin/sh
+watch -t -n 1 -c "/usr/local/bin/juicy_status"

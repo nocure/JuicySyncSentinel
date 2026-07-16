@@ -1,0 +1,38 @@
+[Unit]
+Description=Juicy Metadata Backup (Direct Mode)
+After=juicy-mount.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/bash -c ' \
+  DB_PATH="/cloud/cache/juicy_meta/juicy.db"; \
+  BACKUP_DIR="/cloud/cache/juicy_meta"; \
+  TIMESTAMP=$(date +%%Y-%%m%%d-%%H%%M.%%S); \
+  FINAL_BAK="$BACKUP_DIR/juicy.db.$TIMESTAMP.gz"; \
+  \
+  # 1. 強制 Checkpoint 將 WAL 合併至主資料庫 (不截斷/不清理) \
+  /usr/bin/sqlite3 "$DB_PATH" "PRAGMA wal_checkpoint(FULL);"; \
+  \
+  # 2. 備份主資料庫 \
+  /usr/bin/gzip -c "$DB_PATH" > "$FINAL_BAK"; \
+'
+
+# 3. 同步至雲端 (僅同步 .gz 檔案)
+ExecStart=/usr/bin/rclone copy /cloud/cache/juicy_meta/ my_pcloud_account:/rclone/direct/juicy_meta/ \
+  --config=/home/cmm/.config/rclone/rclone.conf \
+  --include 'juicy.db.*.gz' \
+  --quiet
+
+# 4. 本地保留最新 30 份備份
+ExecStart=/bin/bash -c 'ls -t /cloud/cache/juicy_meta/juicy.db.*.gz | tail -n +31 | xargs -r rm'
+
+# 5. 雲端保留最新 30 份備份
+ExecStart=/bin/bash -c ' \
+  /usr/bin/rclone lsf my_pcloud_account:/rclone/direct/juicy_meta/ \
+    --config=/home/cmm/.config/rclone/rclone.conf \
+    --include "juicy.db.*.gz" \
+    --files-only --format "tp" | sort -r | cut -c 21- | \
+    tail -n +31 | xargs -I {} /usr/bin/rclone deletefile my_pcloud_account:/rclone/direct/juicy_meta/{} \
+    --config=/home/cmm/.config/rclone/rclone.conf \
+'

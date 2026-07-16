@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Juicy Meta Backup every 5 minutes
+PartOf=juicy-mount.service
+
+[Timer]
+OnBootSec=1m
+OnUnitActiveSec=5m
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
