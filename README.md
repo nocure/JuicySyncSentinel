@@ -1,11 +1,11 @@
 # JuicySyncSentinel
-JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方案，面向 pCloud 10T 做為備份空間，利用 512G 本地空間，應付 Veeam Backup &amp; Replication 單次備份達 1T 以上的 VM。
+JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方案，面向 pCloud 10T 做為備份空間，利用 512G 本地空間，應付 Veeam Backup &amp; Replication 單次備份達 1T 以上的 VM。以最少的成本做到企業級的功能。
 
 由於 pCloud 的 Client，寫入多大的檔案就要有多大暫存空間，對於備份系統不切實際，所以需要一個中繼伺服器做為暫存。
-而 pCloud 上傳速度有限，最高 12MB/sec, 平均 6MB/sec, Veeam 無法直接對接 pCloud，備份檔無法分割，也無法限速，讀多少，網路頻寬有多少，就寫多少出去，很容易就把中繼伺服器寫爆，檔案大小也是大問題。
-所以中繼伺服器配置 JuiceFS, 用來將檔案切割為 16MB chunk, 利用 rClone 傳輸到 pCloud，並且依照空間剩餘量，調整 JuiceFS 的 process 的 CPUQuota 與 CPUShares 以平衡「寫入速度」與「上傳能力」，這樣的配置可以應付 1T 的 VM 備份。
+而 pCloud 上傳速度有限，最高 12MB/sec, 均速 8MB/sec, Veeam 無法直接對接 pCloud，備份檔無法分割，也無法限速，讀多少，網路頻寬有多少，就寫多少出去，很容易就把中繼伺服器寫爆，檔案大小也是大問題。
+所以中繼伺服器配置 JuiceFS, 用來將檔案切割為 16MB chunk, 利用 rClone 傳輸到 pCloud，並且依照空間剩餘量，調整 JuiceFS 的 process 的 CPUQuota 與 CPUShares 以平衡「寫入速度」與「上傳能力」，這樣的配置可以應付 1T 的 VM 備份。缺點是由於 pCloud 端的備份檔儲存的是 Chunk 碎塊，無法直接使用，必須透過 JuiceFS 才能還原檔案。
 
-我的 1T VM 備份總讀取時間 24 小時，再 12 小時可完全上傳完畢，共 36 小時完成 1T VM 備份。
+我的 1T VM 備份總讀取時間 24 小時，再 12 小時可完全上傳完畢，共 36 小時完成 1T VM 備份，符合均速 8MB/sec 的 pCloud 上傳頻寬。
 
 中繼伺服器硬體配置：6 cores, 4G RAM, 4G Swap, 512G HDD, AlmaLinux 9 minimal installation. 由於 JuiceFS 開啟壓縮，故核心數配置較多。
 
