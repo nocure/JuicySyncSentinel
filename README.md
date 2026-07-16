@@ -26,7 +26,7 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 以上是人類寫的
 
 ---
-以下99.9趴都是 AI 寫的，包含所有系統檔案。文件可能詞不達意，畢竟是AI，系統檔都是部署運作中，都沒問題。
+以下99.9趴都是 AI 寫的，包含所有系統檔案，名字也是AI取的。文件可能詞不達意，畢竟是AI，系統檔都是部署運作中，都沒問題。
 
 這是為您量身打造的 **JuicySync Sentinel** 系統說明文件，專門針對 AlmaLinux 9 環境與 Veeam Backup & Replication 儲存需求進行優化。
 
