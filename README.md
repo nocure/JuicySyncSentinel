@@ -23,6 +23,16 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 
 2026年某時間後，不知為何，juicy-gc 無法對 pcloud 做刪除 Trash 的動作，尚未深究原因。必須上 pCloud 手動刪除 Trash，否則時間一久，Trash 被塞爆會造成 pCloud 網頁打不開，就要找 pCloud 客服處理了。
 
+## 螢幕截圖
+# Windows, Veeam
+<img src='screenshot-2026-0411.0109.01-350-mstsc.png' width=960>
+
+# Linux, jstat
+<img src='screenshot-2026-0411.0106.40-429-Tabby.png' width=960>
+
+# Linux, jstat
+<img src='screenshot-2026-0411.1423.14-733-Tabby.png' width=960>
+
 以上是人類寫的
 
 ---
