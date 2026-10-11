@@ -1,0 +1,22 @@
+[Unit]
+Description=MergerFS Union for Juicy Chunks
+Requires=juicy-chunks-remote.service
+After=juicy-chunks-remote.service
+PartOf=juicy-mount.service
+
+[Service]
+Type=forking
+ExecStartPre=/usr/bin/mkdir -p /cloud/cache/juicy_chunks_local /cloud/chunks
+ExecStart=/usr/bin/mergerfs \
+  /cloud/cache/juicy_chunks_local=RW:/cloud/juicy_chunks_remote=RO \
+  /cloud/chunks \
+  -o allow_other \
+  -o use_ino \
+  -o cache.files=off \
+  -o dropcacheonclose=true \
+  -o category.create=epmfs \
+  -o func.getattr=newest \
+  -o fsname=juicy-mergerfs
+ExecStop=/bin/fusermount3 -u -z /cloud/chunks
+Restart=on-failure
+RestartSec=5s

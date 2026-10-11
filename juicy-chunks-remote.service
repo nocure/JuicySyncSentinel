@@ -1,0 +1,33 @@
+[Unit]
+Description=Rclone Remote Mount (pCloud)
+After=network-online.target
+Wants=network-online.target
+PartOf=juicy-mount.service
+
+[Service]
+Type=simple
+#User=root
+#Group=root
+ExecStartPre=/usr/bin/mkdir -p /cloud/juicy_chunks_remote /cloud/cache/rclone_cache
+#ExecStartPre=/usr/bin/chmod 755 /cloud/cache/juicy_chunks_local /cloud/chunks /cloud/cache/juicy_meta
+ExecStart=/usr/bin/rclone mount pcloud_ecstasy0:/rclone/juicy_chunks /cloud/juicy_chunks_remote \
+  --config=/home/cmm/.config/rclone/rclone.conf \
+  --allow-non-empty \
+  --read-only \
+  --allow-other \
+  --cache-dir=/cloud/cache/rclone_cache \
+  --vfs-cache-mode full \
+  --vfs-cache-max-size 1G \
+  --vfs-cache-max-age 1h \
+  --vfs-read-ahead 12M \
+  --buffer-size 4M \
+  --use-mmap \
+  --uid 1001 \
+  --gid 1001 \
+  --contimeout 15s \
+  --timeout 30s \
+  --log-level INFO \
+  --log-file=/var/log/juicy/juicy-chunks-remote.log
+ExecStop=/bin/fusermount3 -u -z /cloud/juicy_chunks_remote
+Restart=on-failure
+RestartSec=5s

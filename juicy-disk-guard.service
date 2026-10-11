@@ -1,5 +1,5 @@
 [Unit]
-Description=Juicy Dynamic Resource Guard (Multi-Core Scaling)
+Description=Juicy Disk Guard
 After=juicy-mount.service
 PartOf=juicy-mount.service
 
@@ -8,61 +8,34 @@ Type=oneshot
 User=root
 ExecStart=/bin/bash -c ' \
     STATE_FILE="/cloud/cache/juicy_meta/.juicy_guard_state"; \
-    RAW_FREE=$(df -BG /cloud/cache/juicy_chunks_local | awk "NR==2 {print \$4}" | sed "s/G//"); \
-	# N=$(nproc); \
-    # CPU_COUNT=$(($N > 1 ? $N - 1 : 1)); \
-    CPU_COUNT=2; \
+    RAW_FREE=$$(df -BG /cloud/cache/juicy_chunks_local | awk "NR==2 {print \$$4}" | sed "s/G//"); \
     \
-    # 執行階層判定 (Ceiling Tier) \
-    if [ "$RAW_FREE" -le 50 ]; then \
-        CEIL_FREE=50; \
-    elif [ "$RAW_FREE" -ge 500 ]; then \
-        CEIL_FREE=500; \
+    # 使用一般索引陣列 (按 Index 0, 1, 2... 一一對應) \
+    THRESHOLDS=( 25  50 100 150 200 250 300 350 400 450 500 ); \
+    QUOTAS=(     2  20  40  60  80 100 120 140 160 180 200 ); \
+    WEIGHTS=( 2000 1000 900 800 700 600 500 400 300 200 100 ); \
+    \
+    MATCH_IDX=10; \
+    for i in $${!THRESHOLDS[@]}; do \
+        if [ "$${RAW_FREE}" -le "$${THRESHOLDS[$$i]}" ]; then \
+            MATCH_IDX=$$i; \
+            break; \
+        fi; \
+    done; \
+    \
+    MATCHED_TIER=$${THRESHOLDS[$$MATCH_IDX]}; \
+    TOTAL_QUOTA=$${QUOTAS[$$MATCH_IDX]}; \
+    WEIGHT=$${WEIGHTS[$$MATCH_IDX]}; \
+    \
+    if [ -f "$$STATE_FILE" ]; then \
+        read LAST_TIER LAST_QUOTA LAST_WEIGHT < "$$STATE_FILE"; \
     else \
-        CEIL_FREE=$(( ((RAW_FREE + 49) / 50) * 50 )); \
+        LAST_TIER=-1; \
     fi; \
     \
-    # 讀取上次紀錄 \
-    if [ -f "$STATE_FILE" ]; then \
-        read LAST_CEIL LAST_QUOTA LAST_SHARES < "$STATE_FILE"; \
-    else \
-        LAST_CEIL=-1; \
-    fi; \
-    \
-    # 只有當階層變動時才執行調整 \
-    if [ "$CEIL_FREE" -ne "$LAST_CEIL" ]; then \
-        \
-        # 1. 計算 單核 CPUQuota 比例 \
-        # 邏輯: 500(100%), 450(90%), 400(80%)... 100(20%), 50及以下(10%) \
-        if [ "$CEIL_FREE" -ge 500 ]; then \
-            QUOTA_BASE=100; \
-        elif [ "$CEIL_FREE" -le 50 ]; then \
-            QUOTA_BASE=10; \
-        else \
-            STEPS=$(( (500 - CEIL_FREE) / 50 )); \
-            QUOTA_BASE=$(( 100 - (STEPS * 10) )); \
-        fi; \
-        \
-        # 乘上 CPU 數量 (總體 CPUQuota) \
-        TOTAL_QUOTA=$(( QUOTA_BASE * CPU_COUNT )); \
-        \
-        # 2. 計算 CPUShares \
-        if [ "$CEIL_FREE" -ge 450 ]; then \
-            SHARES=1024; \
-        elif [ "$CEIL_FREE" -le 50 ]; then \
-            SHARES=2048; \
-        else \
-            STEPS=$(( (450 - CEIL_FREE) / 50 )); \
-            SHARES=$(( 1024 + (STEPS * 128) )); \
-        fi; \
-        \
-        # 執行參數調整 \
+    if [ "$$MATCHED_TIER" -ne "$$LAST_TIER" ]; then \
         systemctl set-property juicy-mount.service CPUQuota=$${TOTAL_QUOTA}%; \
-        systemctl set-property juicy-upload.service CPUShares=$${SHARES}; \
-        \
-        # 更新狀態檔案紀錄 (儲存的是單核比例 QUOTA_BASE，方便觀察) \
-        echo "$CEIL_FREE $QUOTA_BASE $SHARES" > "$STATE_FILE"; \
-        \
-        # 紀錄變更日誌 \
-        echo "[Juicy] Tier: $${CEIL_FREE}G (Raw: $${RAW_FREE}G) | Multi-Core Quota: $${TOTAL_QUOTA}% ($${CPU_COUNT} Cores) | Shares: $${SHARES}"; \
+        systemctl set-property juicy-upload.service CPUWeight=$${WEIGHT}; \
+        echo "$$MATCHED_TIER $$TOTAL_QUOTA $$WEIGHT" > "$$STATE_FILE"; \
+        echo "[Juicy Guard] Tier: <= $${MATCHED_TIER}G (Raw Free: $${RAW_FREE}G) | Multi-Core Quota: $${TOTAL_QUOTA}% | CPUWeight: $${WEIGHT}"; \
     fi'
