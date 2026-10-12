@@ -3,8 +3,8 @@ Description=Run Juicy Disk Space Guard every minute
 PartOf=juicy-mount.service
 
 [Timer]
-# 開機後 1 分鐘啟動，之後每 1 分鐘執行一次
-OnBootSec=1min
+# 開機後 5 秒啟動，以設定CPU Suppression Status，之後每 1 分鐘執行一次
+OnBootSec=5s
 OnUnitActiveSec=1min
 AccuracySec=1s
 

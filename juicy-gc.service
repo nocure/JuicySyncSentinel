@@ -1,5 +1,8 @@
 [Unit]
 Description=Juicy Garbage Collection & Cloud Cleanup
+RequiresMountsFor=/cloud/chunks
+Requires=juicy-chunks-union.service
+After=juicy-chunks-union.service
 After=juicy-mount.service
 
 [Service]
@@ -13,10 +16,10 @@ ExecStart=/usr/local/bin/juicefs gc --delete redis://127.0.0.1:6379/1
 ExecStartPost=/usr/bin/redis-cli MEMORY PURGE
 ExecStartPost=/usr/bin/redis-cli BGREWRITEAOF
 
-# 3. 清理超過 30 天的本地 Metadata Dump (維持原樣)
+# 3. 清理超過 30 天的本地 Metadata Dump
 ExecStartPost=/usr/bin/find /cloud/chunks/juicy-chunks/meta/ -name "dump-*.json.gz" -mtime +30 -delete
 
-# 4. 清理 pCloud 上超過 24 小時的 .partial 暫存檔 (維持原樣)
+# 4. 清理 pCloud 上超過 24 小時的 .partial 暫存檔
 ExecStartPost=/usr/bin/rclone delete pcloud_ecstasy0:/rclone/juicy_chunks \
     --include "*.partial" \
     --min-age 24h \

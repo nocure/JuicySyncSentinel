@@ -1,5 +1,6 @@
 [Unit]
-Description=JuiceFS Mount Primary Service (Juicy)
+Description=Juicy Primary Service
+RequiresMountsFor=/cloud/chunks
 Requires=juicy-chunks-union.service
 After=juicy-chunks-union.service
 Wants=juicy-chunks-union.service juicy-disk-guard.timer juicy-upload.timer juicy-meta-backup.timer juicy-gc.timer
@@ -11,7 +12,7 @@ Type=simple
 ExecStartPre=/usr/bin/mkdir -p /cloud/juicy
 ExecStartPre=/usr/bin/sleep 1
 ExecStart=/usr/local/bin/juicefs mount \
-  --buffer-size 128 \
+  --buffer-size 384 \
   --prefetch 1 \
   --max-uploads 4 \
   --writeback \
