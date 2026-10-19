@@ -13,7 +13,6 @@ ExecStartPre=/usr/bin/mkdir -p /cloud/juicy_chunks_remote /cloud/cache/rclone_ca
 ExecStart=/usr/bin/rclone mount pcloud_ecstasy0:/rclone/juicy_chunks /cloud/juicy_chunks_remote \
   --config=/home/cmm/.config/rclone/rclone.conf \
   --allow-non-empty \
-  --read-only \
   --allow-other \
   --cache-dir=/cloud/cache/rclone_cache \
   --vfs-cache-mode full \

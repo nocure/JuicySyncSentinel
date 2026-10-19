@@ -11,7 +11,7 @@ KillMode=none
 ExecStartPre=/usr/bin/mkdir -p /cloud/cache/juicy_chunks_local /cloud/chunks
 ExecStart=/usr/bin/mergerfs \
   -f # foreground mode \
-  /cloud/cache/juicy_chunks_local=RW:/cloud/juicy_chunks_remote=RO \
+  /cloud/cache/juicy_chunks_local=RW:/cloud/juicy_chunks_remote=NC \
   /cloud/chunks \
   -o category.create=ff \
   -o func.getattr=newest \
