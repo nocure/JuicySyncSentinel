@@ -7,7 +7,7 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 
 我的 1T VM 備份總讀取時間少於 24 小時， 36 可完全上傳完畢，完成 1T VM 備份，符合均速 8MB/sec 的 pCloud 上傳頻寬。
 
-中繼伺服器硬體配置：6 cores, 4G RAM, 4G Swap, 512G HDD, AlmaLinux 9 minimal installation. 由於 JuiceFS 開啟壓縮，故核心數配置較多。
+中繼伺服器硬體配置：4 cores, 4G RAM, 4G Swap, 512G HDD, AlmaLinux 9 minimal installation. 由於 JuiceFS 開啟壓縮，故核心數配置較多。
 
 初始化 JuiceFS 資料庫指令：
 ```text
@@ -48,7 +48,7 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 
 # JuicySync Sentinel (JSS) 系統說明文件
 
-**版本**：v2.0 (MergerFS + Redis 核心重構版)
+**版本**：v2.1 (JuiceFS + Redis + MergerFS + rClone + pCloud)
 
 **更新日期**：2026 年 10 月
 
@@ -58,14 +58,14 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 
 ## 一、 架構設計與整體功能說明
 
-**JuicySync Sentinel (JSS)** 是一套具備動態資源自我調節能力的高效能雲端混合儲存方案。系統結合了 **JuiceFS** 的強大元數據分塊管理與 **MergerFS** 的本地/雲端聯合掛載特性，專為 Veeam Backup & Replication 等大容量備份需求（支援單檔 1TB+）所設計。它成功將有限的 512GB 本地快取 SSD 轉化為高達 10TB 的 pCloud 備援儲存空間。
+**JuicySync Sentinel (JSS)** 是一套具備動態資源自我調節能力的高效能雲端混合儲存方案。系統結合了 **JuiceFS** 的強大元數據分塊管理與 **MergerFS** 的本地/雲端聯合掛載特性，專為 Veeam Backup & Replication 等大容量備份需求（支援單檔 1TB+）所設計。它成功將有限的 512GB 本地快取 HDD 轉化為高達 10TB 的 pCloud 備援儲存空間。
 
 ### 核心功能亮點：
 
-1. **MergerFS 零延遲寫入**：透過 MergerFS 的 `-o category.create=epmfs` 策略，所有來自 JuiceFS 的新 Chunk 資料塊均 100% 強制先落在本地 SSD（`/cloud/cache/juicy_chunks_local`），確保 Veeam 備份任務不因網路波動作而拋出 Timeout。
+1. **MergerFS 零延遲寫入**：透過 MergerFS 的 `-o category.create=ff` 策略，所有來自 JuiceFS 的新 Chunk 資料塊均 100% 強制先落在本地 HDD（`/cloud/cache/juicy_chunks_local`），確保 Veeam 備份任務不因網路波動作而拋出 Timeout。
 
 
-2. **非同步背景數據流動**：系統每 60 秒透過 `rclone move` 自動將本地滿 20 秒以上的 Chunks 搬移至 pCloud，並在刪除本地檔案後由 MergerFS 透明切換至遠端唯讀掛載點（`/cloud/juicy_chunks_remote`），達成「實時本地寫入、背景定時同步」。
+2. **非同步背景數據流動**：系統每 60 秒透過 `rclone move` 自動將本地滿 20 秒以上的 Chunks 搬移至 pCloud，並在刪除本地檔案後由 MergerFS 透明切換至遠端掛載點（`/cloud/juicy_chunks_remote`），達成「實時本地寫入、背景定時同步」。
 
 
 3. **雲端按需區塊預讀 (Sparse VFS)**：遠端 Rclone 掛載採用 `--vfs-cache-mode full`，支援稀疏檔案（Sparse File）技術，JuiceFS 在讀取歷史備份時僅會按需下載所需的 Block，絕不浪費頻寬與本地快取。
@@ -98,10 +98,10 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 +---------------------------------+---------------------------------+
                                   │
          ┌────────────────────────┴────────────────────────┐
-         │ (RW: 新建與寫入優先)                            │ (RO: 唯讀讀取)
+         │ (RW: 新建與寫入優先)                            │ (NC: 不新增)
          ▼                                                 ▼
 +----------------------------------+     +----------------------------------+
-| 3a. 本地寫入緩衝區 (Local SSD)    |     | 3b. Rclone pCloud 唯讀掛載點     |
+| 3a. 本地寫入緩衝區 (Local HDD)    |     | 3b. Rclone pCloud 不新增掛載點     |
 | (/cloud/cache/juicy_chunks_local)|     | (/cloud/juicy_chunks_remote)     |
 +----------------------------------+     +----------------------------------+
          │                                                 │
@@ -123,11 +123,11 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 ### 1. 核心掛載與儲存層服務
 
 * **`juicy-chunks-remote.service`**：
-使用 Rclone 將 pCloud 遠端目錄唯讀掛載（`--read-only`）至 `/cloud/juicy_chunks_remote`。開啟 `--vfs-cache-mode full` 以支援稀疏檔案與按需區塊下載。
+使用 Rclone 將 pCloud 遠端目錄掛載至 `/cloud/juicy_chunks_remote`。開啟 `--vfs-cache-mode full` 以支援稀疏檔案與按需區塊下載。
 
 
 * **`juicy-chunks-union.service`**：
-使用 **MergerFS** 將本地 `/cloud/cache/juicy_chunks_local` (RW) 與遠端 `/cloud/juicy_chunks_remote` (RO) 聯合掛載至 `/cloud/chunks`。設定 `category.create=epmfs` 確保寫入與父目錄建置 100% 發生在本地。
+使用 **MergerFS** 將本地 `/cloud/cache/juicy_chunks_local` (RW) 與遠端 `/cloud/juicy_chunks_remote` (NC) 聯合掛載至 `/cloud/chunks`。設定 `category.create=epmfs` 確保寫入與父目錄建置 100% 發生在本地。
 
 
 * **`juicy-mount.service`**：
@@ -142,7 +142,7 @@ JuicySync Sentinel 是一套基於 JuiceFS 與 Rclone 的雲端存儲掛載方�
 
 
 * **`juicy-disk-guard.service` & `.timer**`：
-**動態資源護衛哨兵**。每分鐘檢測本地 SSD 剩餘空間（`RAW_FREE`），依據 25G~500G 的階梯矩陣動態設定 `juicy-mount.service` 的 `CPUQuota` (1%~100%) 與 `juicy-upload.service` 的 `CPUWeight` (100~2000)。
+**動態資源護衛哨兵**。每分鐘檢測本地 HDD 剩餘空間（`RAW_FREE`），依據 25G~500G 的階梯矩陣動態設定 `juicy-mount.service` 的 `CPUQuota` (1%~100%) 與 `juicy-upload.service` 的 `CPUWeight` (100~2000)。
 
 
 
@@ -220,13 +220,13 @@ systemctl list-timers "juicy*"
 
 | 風險場景 | 潛在影響 | JSS 內建防護與應對機制 |
 | --- | --- | --- |
-| **備份寫入速度大於網路上傳速度** | 本地 SSD (512GB) 空間被逐步耗盡。 | **Juicy Disk Guard 護衛機制**：當空間降至 50GB 以下時，JuiceFS 的 CPU 配額會被壓縮至 <=20%，同時提高 Upload 的 CPUWeight 至 1000+，強行壓制寫入並全力保障上傳頻寬。
+| **備份寫入速度大於網路上傳速度** | 本地 HDD (512GB) 空間被逐步耗盡。 | **Juicy Disk Guard 護衛機制**：當空間降至 50GB 以下時，JuiceFS 的 CPU 配額會被壓縮至 <=20%，同時提高 Upload 的 CPUWeight 至 1000+，強行壓制寫入並全力保障上傳頻寬。
 
  |
 | **突發斷電導致元數據遺失** | Redis 記憶體資料未及時寫入硬碟。 | **雙重保護**：Redis 本身開啟 AOF 持久化；`juicy-meta-backup` 每 5 分鐘進行一次 `juicefs dump` 並同步備份至 pCloud，可在秒級內完成重組復原。
 
  |
-| **網路中斷或 pCloud API 異常** | 數據暫存在本地無法上傳。 | `rclone move` 開啟 `--ignore-errors` 與重試邏輯；MergerFS 保障只要本地 SSD 還有空間，Veeam 寫入完全不受影響。
+| **網路中斷或 pCloud API 異常** | 數據暫存在本地無法上傳。 | `rclone move` 開啟 `--ignore-errors` 與重試邏輯；MergerFS 保障只要本地 HDD 還有空間，Veeam 寫入完全不受影響。
 
  |
 | **網絡異常中斷導致 Chunk 上傳半途殘留** | 雲端累積無用的暫存檔。 | `juicy-gc.service` 每日自動清理 pCloud 上超過 24 小時的 `.partial` 檔案。
